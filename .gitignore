@@ -1,0 +1,42 @@
+# runtime output / data
+projects/
+archive/
+source/
+state/
+out/
+data/
+persona/
+
+# local env, models, caches (large, re-installable)
+work/venv/
+work/venv_vc/
+work/models/
+work/seedvc/
+work/pylibs/
+work/bin/
+work/tmp/
+work/wheels/
+work/uvcache/
+work/pmt/
+work/audio/
+work/tts/
+work/*.log
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# misc
+node_modules/
+.DS_Store
+Thumbs.db
+
+# one-off / third-party reference / big files
+work/seedvc.zip
+work/as_readme.md
+work/seedvc_readme.md
+work/fetch_ref.py
+work/ref/
+persona.zh-cn.ini

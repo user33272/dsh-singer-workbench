@@ -1,0 +1,3 @@
+- insert:
+    - id: singer-workbench
+      name: '@local/dsh-singer-workbench'

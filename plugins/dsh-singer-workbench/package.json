@@ -1,0 +1,22 @@
+{
+  "name": "@local/dsh-singer-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "翻唱工作台：分离人声、分析音高与调性、零样本换音色、合成成品，全部在 Harness Web UI 里点击操作。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "pipeline.js", "client.js", "cordis.patch.yml", "README.md", "locale/*.json", "icon.svg"],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}
