@@ -1091,6 +1091,12 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const [busy, setBusy] = useState('')
       const [note, setNote] = useState('')
+      const [personas, setPersonas] = useState([])
+      const [title, setTitle] = useState('')
+      const [theme, setTheme] = useState('')
+      const [personaId, setPersonaId] = useState('')
+      const [task, setTask] = useState(null)
+      const [dispatch, setDispatch] = useState(null)
 
       const load = useCallback(async () => {
         const next = await call('/gen/state')
@@ -1100,10 +1106,53 @@ window.__ModuleLoader__.load({
 
       useEffect(() => {
         load().catch((err) => setError(String(err.message || err)))
+        call('/gen/personas')
+          .then((res) => {
+            const list = res.personas || []
+            setPersonas(list)
+            setPersonaId((prev) => prev || (list[0] ? list[0].id : ''))
+          })
+          .catch(() => {})
       }, [load])
 
       const refresh = () => load().catch((err) => setError(String(err.message || err)))
       const openDir = (path) => call('/open', { path }).catch((err) => setError(String(err.message || err)))
+
+      const prepare = async () => {
+        if (!title.trim()) {
+          setError('先填歌名')
+          return
+        }
+        setBusy('task')
+        setError('')
+        setDispatch(null)
+        try {
+          const res = await call('/gen/task', { title, theme, persona: personaId })
+          setTask(res.task)
+          setNote(`任务已创建：${res.task.dir}`)
+          await load()
+        } catch (err) {
+          setError(String(err.message || err))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const handoff = async () => {
+        if (!task) return
+        setBusy('dispatch')
+        setError('')
+        try {
+          const res = await call('/gen/dispatch', { prompt: task.prompt })
+          setDispatch(res)
+          if (res.queued) setNote('已交给 Agent，回到对话里就能看到它开始生成')
+          else setNote('没能自动唤起 Agent，请把下面的指令粘贴到对话框')
+        } catch (err) {
+          setError(String(err.message || err))
+        } finally {
+          setBusy('')
+        }
+      }
 
       const act = async (id, path) => {
         setBusy(id)
@@ -1137,6 +1186,72 @@ window.__ModuleLoader__.load({
         ),
         error ? h('div', { className: 'swb-error' }, '出错了：' + error) : null,
         note ? h('div', { className: 'swb-desc' }, note) : null,
+        h(
+          'section',
+          { className: 'swb-card' },
+          h('h2', null, '新建生成任务'),
+          h(
+            'div',
+            { className: 'swb-desc' },
+            '选一个工作区人格 + 主题，插件建好目录、写 request.md，再一键交给 Agent 写总稿 → MIDI → 渲染。',
+          ),
+          h('div', { className: 'swb-row' }, h('span', { className: 'swb-label' }, '歌名'), h(TextInput, { value: title, onChange: setTitle })),
+          h('div', { className: 'swb-row' }, h('span', { className: 'swb-label' }, '主题'), h(TextInput, { value: theme, onChange: setTheme })),
+          h(
+            'div',
+            { className: 'swb-row' },
+            h('span', { className: 'swb-label' }, '人格'),
+            h(
+              'select',
+              { className: 'swb-input', value: personaId, onChange: (event) => setPersonaId(event.target.value) },
+              ...personas.map((p) =>
+                h(
+                  'option',
+                  { key: p.id, value: p.id },
+                  `${p.name} · ${p.workspaceTitle || ''}${p.traits ? ' · ' + p.traits : ''}`,
+                ),
+              ),
+              h('option', { value: '' }, '（不用人格，默认）'),
+            ),
+          ),
+          personas.length
+            ? h(
+                'div',
+                { className: 'swb-desc' },
+                (() => {
+                  const p = personas.find((x) => x.id === personaId)
+                  if (!p) return '未选择人格'
+                  return `来自 ${p.workspacePath}${p.tone ? ' · 语气 ' + p.tone : ''}${p.address ? ' · 称呼 ' + p.address : ''}`
+                })(),
+              )
+            : h('div', { className: 'swb-desc' }, '没有找到 persona*.ini（工作区根目录里放一份即可）'),
+          h(
+            'div',
+            { className: 'swb-row' },
+            h(
+              'button',
+              { className: 'swb-btn primary', disabled: busy === 'task' || !title.trim(), onClick: prepare },
+              busy === 'task' ? '创建中…' : '准备生成任务',
+            ),
+            task ? h('button', { className: 'swb-btn', onClick: () => openDir(task.request) }, '打开 request.md') : null,
+            task
+              ? h(
+                  'button',
+                  { className: 'swb-btn', disabled: busy === 'dispatch', onClick: handoff },
+                  busy === 'dispatch' ? '提交中…' : '让 Agent 开始',
+                )
+              : null,
+          ),
+          task ? h('div', { className: 'swb-desc' }, `任务目录：${task.dir}`) : null,
+          dispatch && !dispatch.queued
+            ? h(
+                'div',
+                null,
+                h('div', { className: 'swb-desc' }, `没能自动唤起 Agent：${dispatch.reason || '未知原因'}，下面是可直接粘贴的指令`),
+                h('pre', { className: 'swb-log', style: { maxHeight: '150px' } }, dispatch.prompt || (task && task.prompt) || ''),
+              )
+            : null,
+        ),
         h(
           'section',
           { className: 'swb-card' },

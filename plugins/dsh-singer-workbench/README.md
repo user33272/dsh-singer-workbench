@@ -48,9 +48,17 @@
 
 ### 生成选项卡
 
-列出 `projects\` 下带有 `song-sheet.md` 或 `midi\*.mid` 的项目，每个项目显示三格状态：**总稿 / MIDI / 试听**（`n/3`）。
+**新建生成任务**（卡片最上方）：
 
-- **渲染钢琴**：调用本机 `FluidSynth` + `GeneralUser-GS.sf2`，把 `midi\<项目>.mid` 渲染到 `renders\<项目>_piano.wav`，再经 ffmpeg `loudnorm` 压到 −16 LUFS 并转 192k `renders\<项目>_piano.mp3`；全程离线，约 5–8 秒
+1. 填 **歌名**、**主题**
+2. 选 **人格** —— 下拉里是各工作区根目录的 `persona*.ini`（例如 `singer` 工作区的 `Ray`、`lily-qq` 的 `lily`），会显示特质与语气
+3. 点「准备生成任务」→ 建 `projects\gen\<歌>\` 并写 `request.md`（人格设定 + 主题 + 验收要求）
+4. 点「让 Agent 开始」→ 插件把指令投给**本工作区最近的 Agent 会话**（`agents.list()` 按 cwd 匹配、优先空闲且最近活跃），Agent 会自动写总稿 → MIDI → 渲染
+5. 投递失败时会把指令原文显示在面板里，可复制到对话框手动发送
+
+下面是项目列表，列出 `projects\gen\` 下带有 `song-sheet.md` 或 `midi\*.mid` 的项目，每个项目显示状态与产物。
+
+- **渲染钢琴**：调用本机 `FluidSynth` + `GeneralUser-GS.sf2`，把 `midi\<项目>.mid` 渲染到 `renders\<项目>_piano.wav`，再经 ffmpeg `loudnorm` 压到 −16 LUFS 并转 192k `renders\<项目>_piano.mp3`；没有 FluidSynth 时自动改用 `work\gen_preview.py`；全程离线，约 5–8 秒
 - **重建 MIDI**：跑 `tools\build_midi.py`（兼容老的 `midi\build_midi.py`），改完旋律先点这个再渲染
 - **整理产物**：把老布局（脚本和 `preview_*` 全堆在 `midi\`）搬进 `tools\` 与 `renders\`，重写 `products.json`；文件被占用时退化为复制并提示稍后再整理
 - **试听**：直接走 `/media` 流式播放，可拖动

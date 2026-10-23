@@ -714,6 +714,42 @@ export async function buildGenSong(id) {
   return { id: sanitize(id), script, output: output.trim(), products }
 }
 
+/** 新建一个生成任务：建目录 + 写 request.md（含人格设定与验收要求）。 */
+export async function createGenTask({ title, theme, persona }) {
+  const pid = sanitize(title)
+  if (!pid) throw new Error('歌名不能为空')
+  const p = genPaths(pid)
+  if (existsSync(p.sheet)) throw new Error(`生成项目已存在（已有 song-sheet.md）：${pid}`)
+  for (const dir of [p.midi, p.renders, p.tools]) await mkdir(dir, { recursive: true })
+
+  const lines = [
+    `# 生成任务：${pid}`,
+    '',
+    `- 主题：${theme || '（未填写）'}`,
+  ]
+  if (persona) {
+    lines.push(`- 工作区人格：${persona.name}（${persona.workspaceTitle || persona.workspacePath || '当前工作区'}）`)
+    if (persona.traits) lines.push(`- 人格特质：${persona.traits}`)
+    if (persona.tone) lines.push(`- 语气：${persona.tone}`)
+    if (persona.address) lines.push(`- 称呼：${persona.address}`)
+    if (persona.file) lines.push(`- 人格文件：${persona.file}`)
+  } else {
+    lines.push('- 工作区人格：（默认）')
+  }
+  lines.push(
+    '',
+    '## 要求',
+    '',
+    `1. 在 \`projects\\gen\\${pid}\\song-sheet.md\` 写总稿：曲名、调性、BPM、曲式、和弦进行、歌词（按上面的人格与主题）。`,
+    `2. 在 \`projects\\gen\\${pid}\\tools\\build_midi.py\` 写 MIDI 生成脚本：只用标准库，输出 \`midi\\${pid}.mid\`。`,
+    `3. 用工具 \`cover_workbench\`：\`action=gen_build\`（project=${pid}）生成 MIDI，再 \`action=gen_render\` 渲染钢琴试听。`,
+    '4. 渲染完成后回报：调性、时长、产物路径。',
+  )
+  const requestPath = join(p.base, 'request.md')
+  await writeFile(requestPath, lines.join('\n') + '\n', 'utf8')
+  return { id: pid, dir: p.base, request: requestPath, prompt: lines.join('\n') }
+}
+
 export { genRenderingIds }
 
 function voiceEnv(online) {

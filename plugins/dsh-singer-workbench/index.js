@@ -3,9 +3,14 @@
  * 翻唱工作台 · Host 半。
  * 路由给界面用，工具给 Agent 用，两者都走 pipeline.js 里的同一套任务函数。
  */
+import { readdir, readFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
   buildGenSong,
   cancelJob,
+  createGenTask,
   createProject,
   deleteProject,
   genRenderingIds,
@@ -70,7 +75,116 @@ function route(method, handler) {
   }
 }
 
-function createRoutes() {
+function parseIni(text) {
+  const sections = {}
+  let sec = 'root'
+  sections[sec] = {}
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue
+    const head = line.match(/^\[(.+)\]$/)
+    if (head) {
+      sec = head[1].trim().toLowerCase()
+      sections[sec] = sections[sec] || {}
+      continue
+    }
+    const eq = line.indexOf('=')
+    if (eq < 0) continue
+    sections[sec] = sections[sec] || {}
+    sections[sec][line.slice(0, eq).trim()] = line.slice(eq + 1).trim()
+  }
+  return sections
+}
+
+/** 读取各工作区里的 persona*.ini（人格），供生成任务选用。 */
+async function readWorkspacePersonas(ctx) {
+  const registry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : null
+  const workspaces = registry && typeof registry.list === 'function' ? registry.list() : []
+  const targets = workspaces.length ? workspaces : [{ id: 'local', title: ROOT, path: ROOT }]
+  const out = []
+  for (const ws of targets) {
+    if (!ws || !ws.path || !existsSync(ws.path)) continue
+    let files = []
+    try {
+      files = (await readdir(ws.path)).filter((name) => /^persona.*\.ini$/i.test(name))
+    } catch {
+      continue
+    }
+    for (const file of files) {
+      const path = join(ws.path, file)
+      let text = ''
+      try {
+        text = await readFile(path, 'utf8')
+      } catch {
+        continue
+      }
+      const s = parseIni(text)
+      const name = (s.identity && s.identity.name) || (s.meta && s.meta.name) || ws.title || file
+      out.push({
+        id: `${ws.id}:${file}`,
+        name,
+        workspaceId: ws.id,
+        workspaceTitle: ws.title,
+        workspacePath: ws.path,
+        file: path,
+        traits: (s.personality && s.personality.traits) || '',
+        tone: (s.style && (s.style.tone || s.style['语气'])) || '',
+        address: (s.behavior && s.behavior.address) || '',
+      })
+    }
+  }
+  return out
+}
+
+/** 把生成指令交给本工作区里最近的 Agent；失败时把指令回传界面。 */
+async function dispatchToAgent(ctx, prompt) {
+  const agents = typeof ctx.get === 'function' ? ctx.get('agents') : null
+  if (!agents || typeof agents.list !== 'function') {
+    return { queued: false, reason: 'agents 服务不可用', prompt }
+  }
+  const list = (agents.list() || []).filter((agent) => {
+    try {
+      const cwd = agent.session && agent.session.header ? agent.session.header.cwd : ''
+      return cwd && String(cwd).toLowerCase() === ROOT.toLowerCase()
+    } catch {
+      return false
+    }
+  })
+  if (!list.length) return { queued: false, reason: `没有在 ${ROOT} 下运行的 Agent 会话`, prompt }
+  const score = (agent) => {
+    let updated = 0
+    try {
+      updated = Number(agent.session.header.updatedAt || 0)
+    } catch {
+      updated = 0
+    }
+    const idle = agent.phase && agent.phase.kind === 'idle' ? 1 : 0
+    return updated + idle
+  }
+  list.sort((a, b) => score(b) - score(a))
+  const agent = list[0]
+  const id = String(agent.id || '')
+  const parts = [{ type: 'text', text: prompt }]
+  let lastError = null
+  for (const method of ['send', 'followup', 'inject']) {
+    if (typeof agent[method] !== 'function') continue
+    for (const arg of [parts, prompt, { text: prompt }]) {
+      try {
+        await agent[method](arg)
+        return { queued: true, agent: id, via: `${method}/${Array.isArray(arg) ? 'parts' : typeof arg}` }
+      } catch (err) {
+        lastError = err
+      }
+    }
+  }
+  return {
+    queued: false,
+    reason: lastError ? String(lastError.message || lastError) : '这个 Agent 不支持 send/followup',
+    prompt,
+  }
+}
+
+function createRoutes(ctx) {
   const state = route('GET', async () => {
     await historyReadyPromise()
     return {
@@ -133,6 +247,28 @@ function createRoutes() {
     await streamMedia(req, res, url.searchParams.get('path') || '')
   }
 
+  // ---- 生成任务：读工作区人格、建任务、交给 Agent ----
+  const personas = route('GET', async () => {
+    const list = await readWorkspacePersonas(ctx)
+    return { personas: list }
+  })
+
+  const genTask = route('POST', async (body) => {
+    const title = String(body.title || '').trim()
+    const theme = String(body.theme || '').trim()
+    if (!title) throw new Error('歌名不能为空')
+    const list = await readWorkspacePersonas(ctx)
+    const persona = list.find((item) => item.id === body.persona) || null
+    const task = await createGenTask({ title, theme, persona })
+    return { task }
+  })
+
+  const genDispatch = route('POST', async (body) => {
+    const prompt = String(body.prompt || '')
+    if (!prompt) throw new Error('没有可执行的指令')
+    return dispatchToAgent(ctx, prompt)
+  })
+
   return [
     { path: `${ROUTE}/state`, handler: state },
     { path: `${ROUTE}/run`, handler: run },
@@ -147,6 +283,9 @@ function createRoutes() {
     { path: `${ROUTE}/gen/render`, handler: genRender },
     { path: `${ROUTE}/gen/build`, handler: genBuild },
     { path: `${ROUTE}/gen/tidy`, handler: genTidy },
+    { path: `${ROUTE}/gen/personas`, handler: personas },
+    { path: `${ROUTE}/gen/task`, handler: genTask },
+    { path: `${ROUTE}/gen/dispatch`, handler: genDispatch },
     { path: `${ROUTE}/media`, handler: media },
   ]
 }
@@ -288,7 +427,7 @@ export function apply(ctx) {
   const register = (scope) => {
     const disposers = []
     if (scope.webServer) {
-      for (const entry of createRoutes()) {
+      for (const entry of createRoutes(ctx)) {
         disposers.push(scope.webServer.register({ kind: 'exact', path: entry.path, handler: entry.handler }))
       }
     }
