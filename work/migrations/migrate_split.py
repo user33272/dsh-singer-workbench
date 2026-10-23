@@ -1,9 +1,9 @@
-"""把 projects\\ 下的项目拆到 cover\\（翻唱）与 gen\\（生成）。跑一次即可，可重复执行。"""
+﻿"""把 projects\\ 下的项目拆到 cover\\（翻唱）与 gen\\（生成）。跑一次即可，可重复执行。"""
 import os
 import shutil
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import projectlib as pl
 
 COVER_KEYS = ["audio", "analysis", "work", "baselines", "project.json"]

@@ -21,6 +21,18 @@ PROJECTS = os.path.join(ROOT, "projects")
 COVER = os.path.join(PROJECTS, "cover")
 GEN = os.path.join(PROJECTS, "gen")
 
+# 公共工具链位置：各脚本统一从这里取，避免每个脚本各写一遍
+WORK = os.path.join(ROOT, "work")
+BIN = os.path.join(WORK, "bin")
+FFMPEG = os.path.join(BIN, "ffmpeg.exe")
+VENV = os.path.join(WORK, "venv")
+VENV_PY = os.path.join(VENV, "Scripts", "python.exe")
+VENV_VC = os.path.join(WORK, "venv_vc")
+VENV_VC_PY = os.path.join(VENV_VC, "Scripts", "python.exe")
+SEEDVC = os.path.join(WORK, "seedvc")
+SOUNDFONT = os.path.join(WORK, "soundfonts")
+FLUIDSYNTH = os.path.join(WORK, "tools", "fluidsynth")
+
 ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 

@@ -13,8 +13,10 @@ import os
 import subprocess
 import sys
 
-ROOT = r"D:\singer"
-FFMPEG = os.path.join(ROOT, "work", "bin", "ffmpeg.exe")
+import projectlib as pl
+
+ROOT = pl.ROOT
+FFMPEG = pl.FFMPEG
 
 
 def loudest_start(src, duration):

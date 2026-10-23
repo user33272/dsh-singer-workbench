@@ -13,8 +13,8 @@ import sys
 
 import projectlib as pl
 
-ROOT = r"D:\singer"
-FFMPEG = os.path.join(ROOT, "work", "bin", "ffmpeg.exe")
+ROOT = pl.ROOT
+FFMPEG = pl.FFMPEG
 SEP = os.path.join(ROOT, "work", "sep.py")
 DEFAULT_MODEL = "vocals_mel_band_roformer.ckpt"
 

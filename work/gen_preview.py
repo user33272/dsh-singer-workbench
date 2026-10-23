@@ -17,8 +17,10 @@ import sys
 import numpy as np
 import soundfile as sf
 
-ROOT = r"D:\singer"
-FFMPEG = os.path.join(ROOT, "work", "bin", "ffmpeg.exe")
+import projectlib as pl
+
+ROOT = pl.ROOT
+FFMPEG = pl.FFMPEG
 SR = 44100
 
 

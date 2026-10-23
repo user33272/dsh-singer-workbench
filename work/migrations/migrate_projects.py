@@ -1,11 +1,11 @@
-"""把 out/ 里混在一起的产物按项目整理到 projects/ 下。跑一次即可，重复跑是安全的。"""
+﻿"""把 out/ 里混在一起的产物按项目整理到 projects/ 下。跑一次即可，重复跑是安全的。"""
 import json
 import os
 import shutil
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import projectlib as pl
 
 ROOT = pl.ROOT

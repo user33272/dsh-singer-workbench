@@ -1,4 +1,4 @@
-"""把人声和伴奏合成立体声成品。
+﻿"""把人声和伴奏合成立体声成品。
 
 用法：
     mix.cmd vocals.wav instrumental.wav [-o out.wav] [--vocal-db 0] [--loudness -14]
@@ -13,7 +13,7 @@ import soundfile as sf
 
 import projectlib as pl
 
-FFMPEG = r"D:\singer\work\bin\ffmpeg.exe"
+FFMPEG = pl.FFMPEG
 
 
 def main():

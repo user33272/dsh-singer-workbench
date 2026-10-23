@@ -14,9 +14,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import projectlib as pl
 
-ROOT = r"D:\singer"
-SEEDVC = os.path.join(ROOT, "work", "seedvc")
-PY = os.path.join(ROOT, "work", "venv_vc", "Scripts", "python.exe")
+ROOT = pl.ROOT
+SEEDVC = pl.SEEDVC
+PY = pl.VENV_VC_PY
 
 
 def main():

@@ -1,4 +1,4 @@
-"""补齐 migrate_split 没收尾的部分：把 projects\\<id> 里剩下的文件挪进 gen\\<id> 或 cover\\<id>。
+﻿"""补齐 migrate_split 没收尾的部分：把 projects\\<id> 里剩下的文件挪进 gen\\<id> 或 cover\\<id>。
 
 文件被占用（正在播放）时跳过，等释放后再跑一次即可。
 """
@@ -7,7 +7,7 @@ import shutil
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import projectlib as pl
 
 BUSY = (PermissionError, OSError)

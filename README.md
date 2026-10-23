@@ -1,4 +1,4 @@
-# singer —— 本地翻唱工作台
+﻿# singer —— 本地翻唱工作台
 
 在 Windows 上用一套脚本 + 一个 Harness 插件，把「一首歌 → 成品翻唱」的流程固定下来：
 分离人声 → 音高与调性分析 → 换音色（零样本）→ 合成。
@@ -12,11 +12,11 @@ work\                脚本与环境（venv/模型/缓存不进仓库）
   tune.py            修音准（WORLD 声码器，只改 f0）
   voice.py           Seed-VC 零样本换音色（可跨项目借参考音色）
   mix.py             合成（限峰 + loudnorm）
-  projectlib.py      项目目录规则
+  projectlib.py      唯一的路径/常量来源（ROOT、FFMPEG、VENV、SEEDVC…）
   gen_preview.py     通用 MIDI 试听渲染器（FluidSynth 不可用时兜底）
-  migrate_projects.py 旧平铺产物迁移到 projects\ 的一次性脚本
-  migrate_split.py   把 projects\<id> 拆成 cover\ 与 gen\（一次性）
-  finish_split.py    补齐拆分时被占用没搬完的文件
+  bench\             一次性实验脚本（A/B 对比、频谱对照）
+  migrations\        一次性迁移脚本（平铺 → projects\，拆 cover\/gen\）
+  LAYOUT.md          工具该放哪、哪些重复是保留的
   SEPARATION.md      环境搭建、踩坑、命令速查
 plugins\
   dsh-singer-workbench\   Harness 插件（Host 路由 + 客户端面板）

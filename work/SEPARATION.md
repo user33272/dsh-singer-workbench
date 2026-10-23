@@ -24,7 +24,7 @@ projects\gen\<项目>\       生成（词曲总稿 → MIDI → 钢琴试听）
 
 - 项目 id 默认取源文件名；同一个源文件再跑分离会复用已有项目（按 `project.json` 里的 `source` 匹配）
 - 想指定项目：`-p "项目名"`（separate / pitch / mix），voice 用 `--project`
-- 旧版本平铺在 `projects\<项目>\` 的目录已用 `work\migrate_split.py`、`work\finish_split.py` 拆开
+- 旧版本平铺在 `projects\<项目>\` 的目录已用 `work\migrations\migrate_split.py`、`work\migrations\finish_split.py` 拆开
 - 更早的平铺产物归档在 `archive\old-out-20261023\`，`out/` 目录已取消
 
 ## 一键跑
