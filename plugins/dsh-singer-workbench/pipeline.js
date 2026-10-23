@@ -652,18 +652,24 @@ export async function renderGenSong(id) {
     const raw = join(p.renders, `_${pid}_raw.wav`)
     const wav = join(p.renders, `${pid}_piano.wav`)
     const mp3 = join(p.renders, `${pid}_piano.mp3`)
-    await runOnce(
-      FLUIDSYNTH,
-      [
-        '-ni', '-F', raw, '-r', '44100', '-g', '0.7',
-        '-o', 'synth.reverb.active=1',
-        '-o', 'synth.reverb.room-size=0.7',
-        '-o', 'synth.reverb.damp=0.4',
-        '-o', 'synth.chorus.active=0',
-        SOUNDFONT, midiPath,
-      ],
-      baseEnv(),
-    )
+    const useFluid = existsSync(FLUIDSYNTH) && existsSync(SOUNDFONT)
+    if (useFluid) {
+      await runOnce(
+        FLUIDSYNTH,
+        [
+          '-ni', '-F', raw, '-r', '44100', '-g', '0.7',
+          '-o', 'synth.reverb.active=1',
+          '-o', 'synth.reverb.room-size=0.7',
+          '-o', 'synth.reverb.damp=0.4',
+          '-o', 'synth.chorus.active=0',
+          SOUNDFONT, midiPath,
+        ],
+        baseEnv(),
+      )
+    } else {
+      // 没有 FluidSynth / 音源时用通用正弦渲染器兜底
+      await runOnce(PY, [join(WORK, 'gen_preview.py'), midiPath, '-o', raw], baseEnv())
+    }
     await runOnce(
       FFMPEG,
       ['-y', '-hide_banner', '-loglevel', 'error', '-i', raw, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', wav],

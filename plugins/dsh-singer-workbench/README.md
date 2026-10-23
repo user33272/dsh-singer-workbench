@@ -92,10 +92,13 @@ projects\
     gen\<项目>\            生成
         song-sheet.md
         midi\<项目>.mid
-        renders\<项目>_piano.mp3 / .wav
-        tools\build_midi.py
-        products.json
+        renders\<项目>_piano.mp3 / .wav       试听与无损
+    tools\build_midi.py                    这首歌的 MIDI 生成脚本（曲式数据，逐项目一份）
+    products.json                          产物清单
 ```
+
+`tools\` 里只放**这首歌专属**的生成脚本（和弦走向、旋律都写死在里头）；
+通用渲染器在 `work\gen_preview.py`（正弦叠加，FluidSynth 不可用时自动兜底），不往每个项目里各塞一份。
 
 - 两端各自独立扫描：翻唱面板只看 `cover\`，生成面板只看 `gen\`
 - 旧版本平铺在 `projects\<项目>\` 的目录用 `work\migrate_split.py` + `work\finish_split.py` 一次性拆开
