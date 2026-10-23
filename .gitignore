@@ -40,3 +40,7 @@ work/seedvc_readme.md
 work/fetch_ref.py
 work/ref/
 persona.zh-cn.ini
+
+# bundled binaries / soundfont (large, license-bound)
+work/tools/
+work/soundfonts/

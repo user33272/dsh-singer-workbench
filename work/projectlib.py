@@ -17,6 +17,9 @@ from datetime import datetime
 
 ROOT = r"D:\singer"
 PROJECTS = os.path.join(ROOT, "projects")
+# 翻唱与生成分开管理：projects\cover\ 与 projects\gen\
+COVER = os.path.join(PROJECTS, "cover")
+GEN = os.path.join(PROJECTS, "gen")
 
 ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -31,7 +34,7 @@ def sanitize(name):
 
 
 def project_dir(pid):
-    return os.path.join(PROJECTS, sanitize(pid))
+    return os.path.join(COVER, sanitize(pid))
 
 
 def paths(pid):
@@ -107,25 +110,25 @@ def resolve(path, explicit=None):
     if explicit:
         return sanitize(explicit)
     full = os.path.abspath(path)
-    proj_root = os.path.abspath(PROJECTS)
-    if full.startswith(proj_root + os.sep):
-        rel = os.path.relpath(full, proj_root)
+    cover_root = os.path.abspath(COVER)
+    if full.startswith(cover_root + os.sep):
+        rel = os.path.relpath(full, cover_root)
         first = rel.split(os.sep)[0]
         if first and first not in (".", ".."):
             return sanitize(first)
     parent = os.path.basename(os.path.dirname(full))
-    if parent and parent.lower() not in ("out", "source", "audio", "work", "analysis", "tmp"):
+    if parent and parent.lower() not in ("out", "source", "audio", "work", "analysis", "tmp", "cover", "gen"):
         return sanitize(parent)
     return sanitize(os.path.splitext(os.path.basename(full))[0])
 
 
 def find_by_source(src):
     """已经在某个项目里登记过这个源文件时，复用那个项目 id。"""
-    if not src or not os.path.isdir(PROJECTS):
+    if not src or not os.path.isdir(COVER):
         return None
     target = os.path.abspath(src).lower()
-    for name in os.listdir(PROJECTS):
-        meta_path = os.path.join(PROJECTS, name, "project.json")
+    for name in os.listdir(COVER):
+        meta_path = os.path.join(COVER, name, "project.json")
         if not os.path.isfile(meta_path):
             continue
         try:
@@ -141,10 +144,10 @@ def find_by_source(src):
 
 def list_projects():
     out = []
-    if not os.path.isdir(PROJECTS):
+    if not os.path.isdir(COVER):
         return out
-    for name in sorted(os.listdir(PROJECTS)):
-        base = os.path.join(PROJECTS, name)
+    for name in sorted(os.listdir(COVER)):
+        base = os.path.join(COVER, name)
         if not os.path.isdir(base):
             continue
         meta = _load_meta(name)

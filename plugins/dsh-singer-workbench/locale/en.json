@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Cover Workbench",
-    "description": "A visual pipeline for vocal separation, pitch and key analysis, zero-shot voice conversion and final mixing, running inside the D:\\singer workspace with live logs and cancellation."
+    "title": "Music Workbench",
+    "description": "Two sub-modules: cover (separation, pitch analysis, zero-shot voice conversion, mixing) and create (song sheet, MIDI, offline piano rendering), all inside the D:\\singer workspace."
   }
 }

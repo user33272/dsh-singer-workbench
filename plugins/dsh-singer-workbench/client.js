@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
 
     const DICTS = {
       zh: {
-        nav: '翻唱工作台',
+        nav: '音乐工作台',
         title: '翻唱工作台',
         subtitle: '一条龙：分离人声 → 分析音高与调性 → 零样本换音色 → 合成成品。每一步都能单独重跑。',
         songSection: '1. 选歌',
@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
         needRef: '先选参考人声。',
       },
       en: {
-        nav: 'Cover Workbench',
+        nav: 'Music Workbench',
         title: 'Cover Workbench',
         subtitle: 'Separate → analyze pitch → zero-shot voice conversion → mix. Every step can be re-run on its own.',
         songSection: '1. Pick a song',
@@ -155,6 +155,10 @@ window.__ModuleLoader__.load({
 .swb-shots{display:flex;flex-direction:column;gap:8px}
 .swb-shot img{width:100%;border-radius:8px;border:1px solid var(--dsw-alias-border-l1)}
 .swb-error{color:var(--dsw-alias-state-error-primary);font-size:12px}
+.swb-shell{display:flex;flex-direction:column;height:100%;min-height:0}
+.swb-tabsbar{display:flex;gap:6px;padding:10px 16px 0;max-width:1040px;margin:0 auto;width:100%;box-sizing:border-box;border-bottom:1px solid var(--dsw-alias-border-l1)}
+.swb-shellbody{flex:1;min-height:0;display:flex}
+.swb-shellbody>.swb-root{flex:1;min-height:0}
 `
 
     async function call(path, body) {
@@ -610,8 +614,9 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'swb-row' },
-            h('button', { className: 'swb-btn', onClick: () => openPath((data && data.sourceDir) || 'D:\\singer\\source') }, '打开 source 文件夹'),
-            h('button', { className: 'swb-btn', onClick: () => openPath((data && data.projectsDir) || 'D:\\singer\\projects') }, '打开 projects 文件夹'),
+            h('button', { className: 'swb-btn', onClick: () => openPath((data && data.sourceDir) || 'D:\\singer\\source') }, '打开 source'),
+            h('button', { className: 'swb-btn', onClick: () => openPath((data && data.projectsDir) || 'D:\\singer\\projects\\cover') }, '打开翻唱项目'),
+            h('button', { className: 'swb-btn', onClick: () => openPath((data && data.genDir) || 'D:\\singer\\projects\\gen') }, '打开生成项目'),
             h('button', { className: 'swb-btn', onClick: () => setCreating(!creating) }, creating ? '取消新建' : '新建项目'),
           ),
           creating
@@ -1081,6 +1086,188 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function GenPanel() {
+      const [state, setState] = useState(null)
+      const [error, setError] = useState('')
+      const [busy, setBusy] = useState('')
+      const [note, setNote] = useState('')
+
+      const load = useCallback(async () => {
+        const next = await call('/gen/state')
+        setState(next)
+        return next
+      }, [])
+
+      useEffect(() => {
+        load().catch((err) => setError(String(err.message || err)))
+      }, [load])
+
+      const refresh = () => load().catch((err) => setError(String(err.message || err)))
+      const openDir = (path) => call('/open', { path }).catch((err) => setError(String(err.message || err)))
+
+      const act = async (id, path) => {
+        setBusy(id)
+        setError('')
+        setNote('')
+        try {
+          const result = await call(path, { id })
+          if (result && result.rendered) setNote(`已渲染：${result.rendered.mp3}（${result.rendered.sizeMb} MB）`)
+          if (result && result.built) setNote('MIDI 已重建，接着点「渲染钢琴」。')
+          await load()
+        } catch (err) {
+          setError(String(err.message || err))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const items = (state && state.projects) || []
+      const chain = (state && state.toolchain) || {}
+      const mark = (item) => (item && item.ok ? '✓' : '✗')
+
+      return h(
+        'div',
+        { className: 'swb-root' },
+        h('style', null, CSS),
+        h(
+          'div',
+          { className: 'swb-head' },
+          h('h1', null, '生成工作台'),
+          h('p', null, '词曲总稿 → MIDI → 钢琴试听。渲染在本机跑，不需要联网。'),
+        ),
+        error ? h('div', { className: 'swb-error' }, '出错了：' + error) : null,
+        note ? h('div', { className: 'swb-desc' }, note) : null,
+        h(
+          'section',
+          { className: 'swb-card' },
+          h(
+            'div',
+            { className: 'swb-row' },
+            h('h2', null, `生成项目（${items.length}）`),
+            h('button', { className: 'swb-btn', onClick: refresh }, '刷新'),
+            h(
+              'button',
+              { className: 'swb-btn', onClick: () => openDir((state && state.projectsDir) || 'D:\\singer\\projects\\gen') },
+              '打开生成项目',
+            ),
+          ),
+          h(
+            'div',
+            { className: 'swb-desc' },
+            `渲染链：FluidSynth ${mark(chain.fluidsynth)} · 音源 ${mark(chain.soundfont)} · ffmpeg ${mark(chain.ffmpeg)}`,
+          ),
+          items.length
+            ? h(
+                'div',
+                { className: 'swb-acc' },
+                ...items.map((item) => {
+                  const done = [item.sheet, item.midi, item.audio].filter(Boolean).length
+                  const working = busy === item.id
+                  return h(
+                    'div',
+                    { key: item.id, className: `swb-acc-item ${item.audio ? 'on' : ''}` },
+                    h(
+                      'div',
+                      { className: 'swb-acc-head' },
+                      h(
+                        'div',
+                        { className: 'swb-acc-toggle', style: { cursor: 'default' } },
+                        h('span', { className: 'swb-acc-title' }, item.title),
+                        h('span', { className: 'swb-tab-count' }, `${done}/3`),
+                        h('code', { className: 'swb-acc-dir' }, item.id),
+                      ),
+                      h('button', { className: 'swb-mini', onClick: () => openDir(item.dir) }, '目录'),
+                    ),
+                    h(
+                      'div',
+                      { className: 'swb-acc-body' },
+                      h(
+                        'div',
+                        { className: 'swb-list' },
+                        ...(item.products || []).map((p) =>
+                          h(
+                            'div',
+                            { key: p.path, className: 'swb-list-row' },
+                            h('span', { className: 'swb-badge done' }, p.label),
+                            h('span', { className: 'swb-list-name' }, p.name),
+                            h('span', { className: 'swb-desc' }, p.sizeMb >= 1 ? `${p.sizeMb} MB` : `${p.sizeKb} KB`),
+                            h('span', { className: 'swb-desc' }, p.mtime ? p.mtime.slice(5, 16).replace('T', ' ') : ''),
+                            h('button', { className: 'swb-mini', onClick: () => openDir(p.path) }, '文件夹'),
+                          ),
+                        ),
+                      ),
+                      item.extras
+                        ? h('div', { className: 'swb-desc' }, `midi\\ 里还有 ${item.extras} 个杂物文件，点「整理产物」归档`)
+                        : null,
+                      item.audio
+                        ? h(
+                            'div',
+                            { className: 'swb-track' },
+                            h('span', { className: 'swb-track-label' }, '试听'),
+                            h('audio', { controls: true, src: mediaUrl(item.audio.path) }),
+                          )
+                        : h('div', { className: 'swb-desc' }, '还没有试听。点下面的「渲染钢琴」。'),
+                      h(
+                        'div',
+                        { className: 'swb-row' },
+                        h(
+                          'button',
+                          { className: 'swb-btn', disabled: working, onClick: () => act(item.id, '/gen/build') },
+                          working ? '处理中…' : '重建 MIDI',
+                        ),
+                        h(
+                          'button',
+                          {
+                            className: 'swb-btn primary',
+                            disabled: working || !item.midi,
+                            onClick: () => act(item.id, '/gen/render'),
+                          },
+                          working ? '渲染中…' : item.audio ? '重新渲染' : '渲染钢琴',
+                        ),
+                        h(
+                          'button',
+                          { className: 'swb-btn', disabled: working, onClick: () => act(item.id, '/gen/tidy') },
+                          '整理产物',
+                        ),
+                        h(
+                          'button',
+                          { className: 'swb-btn', onClick: () => openDir(item.sheet ? item.sheet.path : item.dir) },
+                          '总稿',
+                        ),
+                      ),
+                    ),
+                  )
+                }),
+              )
+            : h('div', { className: 'swb-desc' }, '还没有生成项目。Agent 建好 song-sheet.md 或 midi\\*.mid 后会自动出现在这里。'),
+        ),
+      )
+    }
+
+    function Workbench() {
+      const [mode, setMode] = useState('cover')
+      return h(
+        'div',
+        { className: 'swb-shell' },
+        h('style', null, CSS),
+        h(
+          'div',
+          { className: 'swb-tabsbar' },
+          h(
+            'button',
+            { className: `swb-tab ${mode === 'cover' ? 'on' : ''}`, onClick: () => setMode('cover') },
+            '翻唱',
+          ),
+          h(
+            'button',
+            { className: `swb-tab ${mode === 'gen' ? 'on' : ''}`, onClick: () => setMode('gen') },
+            '生成',
+          ),
+        ),
+        h('div', { className: 'swb-shellbody' }, mode === 'cover' ? h(Panel) : h(GenPanel)),
+      )
+    }
+
     function Icon() {
       return h(
         'svg',
@@ -1100,7 +1287,7 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('sidebar.panellist', () =>
           ctx.slots.register({ name: 'sidebar.panellist', id: 'singer-workbench', order: 30, label: () => t('nav') }, Icon),
         )
-        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'singer-workbench' }, Panel))
+        ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'singer-workbench' }, Workbench))
       },
     }
   },

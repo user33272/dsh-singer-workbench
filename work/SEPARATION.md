@@ -1,29 +1,37 @@
-# 翻唱链路（分离 + 音高/变调）
+﻿# 翻唱链路（分离 + 音高/变调）
 
 **默认分离模型：`vocals_mel_band_roformer.ckpt`（Mel-Band RoFormer）**，2026-10-22 用 `朧月` 与原 `kara2.onnx`（UVR MDX-NET Karaoke 2）做过 A/B，确认新模型更好。
 
-## 项目目录
+## 项目目录（翻唱 / 生成分开）
 
-一首歌一个项目，所有产物都在 `projects\<项目>\` 下，不再往 `out/` 根目录堆：
+翻唱与生成的产物分目录管理，互不干扰：
 
 ```
-projects\朧月\
+projects\cover\<项目>\     翻唱
     project.json     标题、源文件、每一步的时间戳
     audio\           source.wav / vocals.wav / instrumental.wav（+ mp3 预览）
     analysis\        f0.csv / pitch_curve.png / pitch_report.json / instrumental_shift±N.wav
-    work\            ref.wav / vc_*.wav / cover.wav / cover.mp3
+    work\            ref.wav / vc_*.wav / tuned_vocals.wav / cover.wav / cover.mp3
     baselines\       旧模型与 A/B 片段的对照产物
+
+projects\gen\<项目>\       生成（词曲总稿 → MIDI → 钢琴试听）
+    song-sheet.md
+    midi\<项目>.mid
+    renders\<项目>_piano.mp3 / .wav
+    tools\build_midi.py
+    products.json
 ```
 
 - 项目 id 默认取源文件名；同一个源文件再跑分离会复用已有项目（按 `project.json` 里的 `source` 匹配）
 - 想指定项目：`-p "项目名"`（separate / pitch / mix），voice 用 `--project`
-- 旧的平铺产物归档在 `archive\old-out-20261023\`，`out/` 目录已取消
+- 旧版本平铺在 `projects\<项目>\` 的目录已用 `work\migrate_split.py`、`work\finish_split.py` 拆开
+- 更早的平铺产物归档在 `archive\old-out-20261023\`，`out/` 目录已取消
 
 ## 一键跑
 ```cmd
 D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3"
 ```
-默认输出到 `projects\朧月\audio\`：`source.wav`、`vocals.wav`、`instrumental.wav`（另附 320k mp3）。
+默认输出到 `projects\cover\朧月\audio\`：`source.wav`、`vocals.wav`、`instrumental.wav`（另附 320k mp3）。
 可选参数：`-o 输出目录`、`-p 项目名`、`-m 模型文件名`。
 
 ## 位置
@@ -38,7 +46,7 @@ D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3"
 推荐用封装好的 `separate.py`（会自己转 44.1k wav、跑模型、规整成 `vocals.wav`/`instrumental.wav` 并转 mp3）：
 
 ```powershell
-& D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3"        # 默认进 projects\朧月\audio
+& D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3"        # 默认进 projects\cover\朧月\audio
 & D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3" -p 我的版本
 ```
 
@@ -48,8 +56,8 @@ D:\singer\work\separate.cmd "D:\singer\source\朧月.mp3"
 $env:PATH='D:\singer\work\bin;'+$env:PATH
 D:\singer\work\venv\Scripts\python.exe D:\singer\work\sep.py `
   vocals_mel_band_roformer.ckpt `
-  projects\朧月\audio\source.wav `
-  projects\朧月\audio
+  projects\cover\朧月\audio\source.wav `
+  projects\cover\朧月\audio
 ```
 
 ## 常用模型（audio-separator 0.47.1 内置列表）| 模型文件 | 用途 |
@@ -101,7 +109,7 @@ RVC 在 Python 3.13 上装不了（fairseq 0.12.2 依赖 distutils/numpy<2），
 $env:HF_HOME='D:\singer\work\seedvc\checkpoints\hf_home'
 $env:HF_HUB_CACHE='D:\singer\work\seedvc\checkpoints\hf_cache'
 D:\singer\work\venv_vc\Scripts\python.exe D:\singer\work\seedvc\run_svc.py `
-  --source <源人声.wav> --target <参考.wav> --output projects\朧月\work `
+  --source <源人声.wav> --target <参考.wav> --output projects\cover\朧月\work `
   --diffusion-steps 30 --f0-condition True --fp16 True
 ```
 
@@ -122,10 +130,10 @@ D:\singer\work\venv_vc\Scripts\python.exe D:\singer\work\seedvc\run_svc.py `
 
 ```cmd
 :: 1) 从任意音频剪一段参考（单声道 44.1k，响度统一 -18 LUFS）
-makeref.cmd "projects\朧月\audio\vocals.wav" 100 20 -o "source\my_voice.wav"
+makeref.cmd "projects\cover\朧月\audio\vocals.wav" 100 20 -o "source\my_voice.wav"
 
-:: 2) 换成这个音色（默认写 projects\朧月\work）
-voice.cmd "projects\朧月\audio\vocals.wav" "source\my_voice.wav" -s 30
+:: 2) 换成这个音色（默认写 projects\cover\朧月\work）
+voice.cmd "projects\cover\朧月\audio\vocals.wav" "source\my_voice.wav" -s 30
 ```
 
 - `voice.cmd` 默认离线（`HF_HUB_OFFLINE=1`），只有第一次下载模型才加 `--online`

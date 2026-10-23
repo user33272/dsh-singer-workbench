@@ -3,7 +3,7 @@
  * Host 的 HTTP 路由和 Agent 工具都只调用这里，两条路径共用同一套逻辑。
  */
 import { spawn } from 'node:child_process'
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 
@@ -11,6 +11,8 @@ export const ROOT = 'D:\\singer'
 export const WORK = join(ROOT, 'work')
 export const SOURCE = join(ROOT, 'source')
 export const PROJECTS = join(ROOT, 'projects')
+export const COVER_PROJECTS = join(PROJECTS, 'cover')
+export const GEN_PROJECTS = join(PROJECTS, 'gen')
 
 const PY = join(WORK, 'venv', 'Scripts', 'python.exe')
 const PYVC = join(WORK, 'venv_vc', 'Scripts', 'python.exe')
@@ -221,24 +223,24 @@ export async function listSongs() {
   return songs
 }
 
-/** 项目 id 规则与 work/projectlib.py 保持一致：projects/<id>/ 里的用 id，否则用父目录名，最后才用文件名。 */
+/** 项目 id 规则与 work/projectlib.py 保持一致：projects/cover/<id>/ 里的用 id，否则用父目录名，最后才用文件名。 */
 export function projectIdFor(input, explicit) {
   if (explicit) return sanitize(explicit)
   const full = resolve(input)
-  const root = resolve(PROJECTS)
+  const root = resolve(COVER_PROJECTS)
   if (full.startsWith(root + sep)) {
     const rel = full.slice(root.length + sep.length)
     const first = rel.split(sep)[0]
     if (first && first !== '.' && first !== '..') return sanitize(first)
   }
   const parent = basename(dirname(full))
-  const skip = new Set(['out', 'source', 'audio', 'work', 'analysis', 'tmp', 'baselines'])
+  const skip = new Set(['out', 'source', 'audio', 'work', 'analysis', 'tmp', 'baselines', 'cover', 'gen'])
   if (parent && !skip.has(parent.toLowerCase())) return sanitize(parent)
   return sanitize(songName(full))
 }
 
 export function projectPaths(id) {
-  const base = join(PROJECTS, sanitize(id))
+  const base = join(COVER_PROJECTS, sanitize(id))
   return {
     base,
     audio: join(base, 'audio'),
@@ -257,18 +259,18 @@ export function sanitize(name) {
   return (text || 'project').slice(0, 60)
 }
 
-/** 列出所有项目及其产物，界面按项目组织。 */
+/** 列出所有翻唱项目及其产物，界面按项目组织。 */
 export async function listProjects() {
   let entries = []
   try {
-    entries = await readdir(PROJECTS, { withFileTypes: true })
+    entries = await readdir(COVER_PROJECTS, { withFileTypes: true })
   } catch {
     return []
   }
   const projects = []
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
-    const base = join(PROJECTS, entry.name)
+    const base = join(COVER_PROJECTS, entry.name)
     let meta = {}
     try {
       meta = JSON.parse(await readFile(join(base, 'project.json'), 'utf8'))
@@ -392,8 +394,324 @@ export async function deleteProject(id, options = {}) {
   return { movedTo: dest }
 }
 
-function voiceEnv(online) {  const env = baseEnv()
-  env.HF_HOME = join(WORK, 'seedvc', 'checkpoints', 'hf_home')
+// ---------------------------------------------------------------------------
+// 生成模块（翻唱工作台的第二个子项）：扫描 song-sheet + MIDI，调用本机
+// FluidSynth 与音源渲染钢琴试听。全部离线，产物写回项目 midi\ 目录。
+// ---------------------------------------------------------------------------
+
+const FLUIDSYNTH = join(WORK, 'tools', 'fluidsynth', 'fluidsynth-v2.6.1-win10-x64-cpp11', 'bin', 'fluidsynth.exe')
+const SOUNDFONT = join(WORK, 'soundfonts', 'GeneralUser-GS.sf2')
+const FFMPEG = join(WORK, 'bin', 'ffmpeg.exe')
+const GEN_AUDIO_NAMES = ['preview_piano.mp3', 'preview_synth.mp3', 'preview.mp3']
+
+const rendering = new Set()
+
+export function genToolchain() {
+  return {
+    fluidsynth: { path: FLUIDSYNTH, ok: existsSync(FLUIDSYNTH) },
+    soundfont: { path: SOUNDFONT, ok: existsSync(SOUNDFONT) },
+    ffmpeg: { path: FFMPEG, ok: existsSync(FFMPEG) },
+  }
+}
+
+export function genPaths(id) {
+  const base = join(GEN_PROJECTS, sanitize(id))
+  return {
+    base,
+    midi: join(base, 'midi'),
+    renders: join(base, 'renders'),
+    tools: join(base, 'tools'),
+    sheet: join(base, 'song-sheet.md'),
+    manifest: join(base, 'products.json'),
+  }
+}
+
+const GEN_KIND_LABEL = { sheet: '总稿', midi: 'MIDI', audio: '钢琴试听', wav: '无损 WAV' }
+
+async function fileInfo(path, base) {
+  const info = await stat(path).catch(() => null)
+  if (!info || !info.isFile()) return null
+  const rel = path.startsWith(base) ? path.slice(base.length + 1).replace(/\\/g, '/') : basename(path)
+  return {
+    path,
+    rel,
+    name: basename(path),
+    sizeMb: Math.round((info.size / 1024 / 1024) * 10) / 10,
+    sizeKb: Math.round((info.size / 1024) * 10) / 10,
+    mtime: info.mtime.toISOString(),
+  }
+}
+
+/** 收集一个生成项目的所有产物：总稿 / MIDI / 试听 / 无损 WAV。 */
+export async function collectGenProducts(id) {
+  const p = genPaths(id)
+  const pid = sanitize(id)
+  const products = []
+
+  const sheet = await fileInfo(p.sheet, p.base)
+  if (sheet) products.push({ kind: 'sheet', label: GEN_KIND_LABEL.sheet, ...sheet })
+
+  let mids = []
+  try {
+    const list = await readdir(p.midi, { withFileTypes: true })
+    mids = list.filter((f) => f.isFile() && /\.mid$/i.test(f.name)).map((f) => join(p.midi, f.name))
+  } catch {
+    mids = []
+  }
+  mids.sort((a, b) => {
+    const sa = basename(a) === `${pid}.mid` ? 0 : 1
+    const sb = basename(b) === `${pid}.mid` ? 0 : 1
+    return sa - sb || a.localeCompare(b)
+  })
+  for (const m of mids) {
+    const info = await fileInfo(m, p.base)
+    if (info) products.push({ kind: 'midi', label: GEN_KIND_LABEL.midi, ...info })
+  }
+
+  const canonicalAudio = join(p.renders, `${pid}_piano.mp3`)
+  const canonicalWav = join(p.renders, `${pid}_piano.wav`)
+  const candidates = [
+    [canonicalAudio, 'audio'],
+    [canonicalWav, 'wav'],
+  ]
+  // 只有规范文件不存在时，才把老的 preview_* 当作产物展示，避免同一条出现两遍
+  if (!existsSync(canonicalAudio)) candidates.push([join(p.midi, 'preview_piano.mp3'), 'audio'])
+  if (!existsSync(canonicalWav)) candidates.push([join(p.midi, 'preview_piano.wav'), 'wav'])
+  if (!existsSync(canonicalAudio)) {
+    candidates.push([join(p.midi, 'preview_synth.mp3'), 'audio'])
+    candidates.push([join(p.midi, 'preview.mp3'), 'audio'])
+  }
+  for (const [file, kind] of candidates) {
+    const info = await fileInfo(file, p.base)
+    if (info) products.push({ kind, label: GEN_KIND_LABEL[kind], ...info })
+  }
+  return products
+}
+
+async function writeGenManifest(id, products) {
+  const p = genPaths(id)
+  const body = {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    products: products.map((item) => ({
+      kind: item.kind,
+      label: item.label,
+      path: item.rel,
+      sizeMb: item.sizeMb,
+      mtime: item.mtime,
+    })),
+  }
+  await writeFile(p.manifest, JSON.stringify(body, null, 2), 'utf8')
+  return body
+}
+
+/** 把老布局（脚本和 preview_* 全堆在 midi\）整理成 tools\ + renders\。 */
+export async function tidyGenProject(id) {
+  const p = genPaths(id)
+  if (!existsSync(p.base)) throw new Error(`项目不存在: ${id}`)
+  await mkdir(p.renders, { recursive: true })
+  await mkdir(p.tools, { recursive: true })
+  const pid = sanitize(id)
+  const moved = []
+
+  for (const name of ['build_midi.py', 'preview.py']) {
+    const from = join(p.midi, name)
+    if (!existsSync(from)) continue
+    await rename(from, join(p.tools, name))
+    moved.push({ from: `midi/${name}`, to: `tools/${name}` })
+  }
+
+  const promote = {
+    'preview_piano.wav': `${pid}_piano.wav`,
+    'preview_piano.mp3': `${pid}_piano.mp3`,
+  }
+  const legacy = join(p.renders, '_legacy')
+  const skipped = []
+  for (const name of ['preview_piano_norm.wav', 'preview_piano.wav', 'preview_piano.mp3', 'preview_synth.mp3', 'preview.mp3']) {
+    const from = join(p.midi, name)
+    if (!existsSync(from)) continue
+    const canon = promote[name] ? join(p.renders, promote[name]) : null
+    if (canon && !existsSync(canon)) {
+      try {
+        await rename(from, canon)
+        moved.push({ from: `midi/${name}`, to: `renders/${promote[name]}` })
+      } catch (err) {
+        if (!['EBUSY', 'EPERM', 'EACCES'].includes(err.code)) throw err
+        await copyFile(from, canon)
+        moved.push({ from: `midi/${name}`, to: `renders/${promote[name]}`, copied: true })
+        skipped.push({ from: `midi/${name}`, reason: '文件被占用（可能正在播放），已复制成新名字，原文件稍后可再整理' })
+      }
+    } else {
+      await mkdir(legacy, { recursive: true })
+      try {
+        await rename(from, join(legacy, name))
+        moved.push({ from: `midi/${name}`, to: `renders/_legacy/${name}` })
+      } catch (err) {
+        if (!['EBUSY', 'EPERM', 'EACCES'].includes(err.code)) throw err
+        skipped.push({ from: `midi/${name}`, reason: '文件被占用，等播放结束再整理' })
+      }
+    }
+  }
+
+  const products = await collectGenProducts(id)
+  await writeGenManifest(id, products)
+  return { id: pid, moved, skipped, products }
+}
+
+function genRenderingIds() {
+  return [...rendering].map((base) => basename(base))
+}
+
+/** 扫描 projects\gen 下同时有 song-sheet.md 或 midi/*.mid 的项目。 */
+export async function listGenProjects() {
+  let entries = []
+  try {
+    entries = await readdir(GEN_PROJECTS, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const projects = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const p = genPaths(entry.name)
+    const products = await collectGenProducts(entry.name)
+    if (!products.length) continue
+
+    const sheet = products.find((x) => x.kind === 'sheet') || null
+    const midiList = products.filter((x) => x.kind === 'midi')
+    const audio = products.find((x) => x.kind === 'audio') || null
+    const wav = products.find((x) => x.kind === 'wav') || null
+
+    let title = entry.name
+    if (sheet) {
+      try {
+        const text = await readFile(p.sheet, 'utf8')
+        const head = text.match(/^#\s+(.+)$/m)
+        if (head) title = head[1].trim()
+      } catch {
+        /* 读不到标题就用目录名 */
+      }
+    }
+
+    // midi 目录里除了产物还剩多少杂物（脚本、旧预览）
+    let extras = 0
+    try {
+      const list = await readdir(p.midi, { withFileTypes: true })
+      extras = list.filter((f) => f.isFile() && !/\.mid$/i.test(f.name)).length
+    } catch {
+      extras = 0
+    }
+
+    const stamps = products.map((x) => new Date(x.mtime).getTime()).filter(Number.isFinite)
+    const updatedAt = stamps.length ? new Date(Math.max(...stamps)).toISOString() : null
+
+    projects.push({
+      id: entry.name,
+      title,
+      dir: p.base,
+      sheet: sheet ? { path: sheet.path, name: sheet.name, sizeKb: sheet.sizeKb, mtime: sheet.mtime } : null,
+      midi: midiList.length
+        ? { name: midiList[0].name, path: midiList[0].path, sizeKb: midiList[0].sizeKb, mtime: midiList[0].mtime }
+        : null,
+      midiCount: midiList.length,
+      audio: audio ? { name: audio.name, path: audio.path, sizeMb: audio.sizeMb, mtime: audio.mtime } : null,
+      wav,
+      products,
+      extras,
+      rendering: rendering.has(p.base),
+      updatedAt,
+    })
+  }
+  return projects.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+}
+
+/** 用本机 FluidSynth + 钢琴音源渲染，再归一化响度并转 mp3。 */
+export async function renderGenSong(id) {
+  const p = genPaths(id)
+  if (!existsSync(p.base)) throw new Error(`项目不存在: ${id}`)
+  if (rendering.has(p.base)) throw new Error('这个项目正在渲染，稍等')
+  if (!existsSync(FLUIDSYNTH)) throw new Error('找不到 FluidSynth，请确认 work\\tools\\fluidsynth 已解压')
+  if (!existsSync(SOUNDFONT)) throw new Error('找不到钢琴音源 work\\soundfonts\\GeneralUser-GS.sf2')
+  if (!existsSync(FFMPEG)) throw new Error('找不到 ffmpeg: work\\bin\\ffmpeg.exe')
+
+  let files = []
+  try {
+    files = await readdir(p.midi)
+  } catch {
+    throw new Error('这个项目还没有 midi 目录')
+  }
+  const preferred = `${sanitize(id)}.mid`
+  const midiName = files.includes(preferred) ? preferred : files.find((name) => /\.mid$/i.test(name))
+  if (!midiName) throw new Error('midi 目录里没有 .mid 文件')
+  const midiPath = join(p.midi, midiName)
+
+  rendering.add(p.base)
+  try {
+    await mkdir(p.renders, { recursive: true })
+    const pid = sanitize(id)
+    const raw = join(p.renders, `_${pid}_raw.wav`)
+    const wav = join(p.renders, `${pid}_piano.wav`)
+    const mp3 = join(p.renders, `${pid}_piano.mp3`)
+    await runOnce(
+      FLUIDSYNTH,
+      [
+        '-ni', '-F', raw, '-r', '44100', '-g', '0.7',
+        '-o', 'synth.reverb.active=1',
+        '-o', 'synth.reverb.room-size=0.7',
+        '-o', 'synth.reverb.damp=0.4',
+        '-o', 'synth.chorus.active=0',
+        SOUNDFONT, midiPath,
+      ],
+      baseEnv(),
+    )
+    await runOnce(
+      FFMPEG,
+      ['-y', '-hide_banner', '-loglevel', 'error', '-i', raw, '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11', '-ar', '44100', wav],
+      baseEnv(),
+    )
+    await runOnce(FFMPEG, ['-y', '-hide_banner', '-loglevel', 'error', '-i', wav, '-b:a', '192k', mp3], baseEnv())
+    await rm(raw, { force: true }).catch(() => {})
+
+    // 渲染完顺手整理一次：把遗留的 preview_* 归档，别继续堆在 midi\
+    const legacy = join(p.renders, '_legacy')
+    for (const name of ['preview_piano.wav', 'preview_piano.mp3', 'preview_synth.mp3', 'preview.mp3']) {
+      const from = join(p.midi, name)
+      if (!existsSync(from)) continue
+      await mkdir(legacy, { recursive: true })
+      await rename(from, join(legacy, name)).catch(() => {})
+    }
+    const products = await collectGenProducts(id)
+    await writeGenManifest(id, products)
+
+    const info = await stat(mp3).catch(() => null)
+    return {
+      id: pid,
+      midi: midiPath,
+      wav,
+      mp3,
+      sizeMb: info ? Math.round((info.size / 1024 / 1024) * 10) / 10 : 0,
+      products,
+    }
+  } finally {
+    rendering.delete(p.base)
+  }
+}
+
+/** 重新生成 MIDI：优先跑 tools\build_midi.py，兼容老的 midi\build_midi.py。 */
+export async function buildGenSong(id) {
+  const p = genPaths(id)
+  const script = [join(p.tools, 'build_midi.py'), join(p.midi, 'build_midi.py')].find((file) => existsSync(file))
+  if (!script) throw new Error('这个项目没有 build_midi.py（tools\\ 或 midi\\ 下都找不到），跳过')
+  const output = await runOnce(PY, [script], baseEnv())
+  const products = await collectGenProducts(id)
+  await writeGenManifest(id, products)
+  return { id: sanitize(id), script, output: output.trim(), products }
+}
+
+export { genRenderingIds }
+
+function voiceEnv(online) {
+  const env = baseEnv()
   env.HF_HUB_CACHE = join(WORK, 'seedvc', 'checkpoints', 'hf_cache')
   env.HF_ENDPOINT = env.HF_ENDPOINT || 'https://hf-mirror.com'
   if (!online) {

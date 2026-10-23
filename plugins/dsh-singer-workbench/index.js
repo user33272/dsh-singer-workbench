@@ -1,23 +1,32 @@
+// build: 2026-10-23 19:0x gen module
 /**
  * 翻唱工作台 · Host 半。
  * 路由给界面用，工具给 Agent 用，两者都走 pipeline.js 里的同一套任务函数。
  */
 import {
+  buildGenSong,
   cancelJob,
   createProject,
   deleteProject,
+  genRenderingIds,
+  genToolchain,
   getJob,
   historyFile,
   historyReadyPromise,
   jobSummaryText,
+  listGenProjects,
   listJobs,
   listProjects,
   listSongs,
   makeRef,
+  renderGenSong,
+  tidyGenProject,
   renameProject,
   revealInExplorer,
   startJob,
   streamMedia,
+  COVER_PROJECTS,
+  GEN_PROJECTS,
   PROJECTS,
   ROOT,
   SOURCE,
@@ -70,7 +79,9 @@ function createRoutes() {
       jobs: listJobs(),
       root: ROOT,
       sourceDir: SOURCE,
-      projectsDir: PROJECTS,
+      projectsRoot: PROJECTS,
+      projectsDir: COVER_PROJECTS,
+      genDir: GEN_PROJECTS,
       historyFile: historyFile(),
     }
   })
@@ -105,6 +116,18 @@ function createRoutes() {
   const projectDelete = route('POST', async (body) =>
     deleteProject(String(body.id || ''), { trash: body.trash !== false }))
 
+  const genState = route('GET', async () => ({
+    projects: await listGenProjects(),
+    rendering: genRenderingIds(),
+    toolchain: genToolchain(),
+    projectsDir: GEN_PROJECTS,
+    projectsRoot: PROJECTS,
+  }))
+
+  const genRender = route('POST', async (body) => ({ rendered: await renderGenSong(String(body.id || '')) }))
+  const genBuild = route('POST', async (body) => ({ built: await buildGenSong(String(body.id || '')) }))
+  const genTidy = route('POST', async (body) => ({ tidied: await tidyGenProject(String(body.id || '')) }))
+
   const media = async (req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     await streamMedia(req, res, url.searchParams.get('path') || '')
@@ -120,6 +143,10 @@ function createRoutes() {
     { path: `${ROUTE}/project/create`, handler: projectCreate },
     { path: `${ROUTE}/project/rename`, handler: projectRename },
     { path: `${ROUTE}/project/delete`, handler: projectDelete },
+    { path: `${ROUTE}/gen/state`, handler: genState },
+    { path: `${ROUTE}/gen/render`, handler: genRender },
+    { path: `${ROUTE}/gen/build`, handler: genBuild },
+    { path: `${ROUTE}/gen/tidy`, handler: genTidy },
     { path: `${ROUTE}/media`, handler: media },
   ]
 }
@@ -132,15 +159,15 @@ function registerTools(tools) {
   return tools.register({
     name: 'cover_workbench',
     description:
-      '翻唱工作台：分离人声/伴奏、分析音高与调性、零样本换音色、合成成品。所有步骤都在 D:\\singer 工作区里执行，长任务（换音色约 10 分钟）不会阻塞调用，用 action=job 查询进度。',
+      '音乐工作台，两个子项：①翻唱——分离人声/伴奏、分析音高与调性、零样本换音色、合成成品；②生成——扫描 song-sheet 与 MIDI，用本机 FluidSynth 钢琴音源离线渲染试听。所有步骤都在 D:\\singer 工作区里执行，长任务（换音色约 10 分钟）不会阻塞调用，用 action=job 查询进度。',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
         action: {
           type: 'string',
-          enum: ['status', 'scan', 'separate', 'pitch', 'voice', 'mix', 'job', 'cancel'],
-          description: 'status 看最近任务；scan 列源文件与产物；其余是启动/查询具体步骤',
+          enum: ['status', 'scan', 'separate', 'pitch', 'voice', 'mix', 'job', 'cancel', 'gen', 'gen_render', 'gen_build', 'gen_tidy'],
+          description: 'status 看最近任务；scan 列源文件与产物；gen 看生成项目；gen_render/gen_build/gen_tidy 是生成子项操作；其余是启动/查询具体步骤',
         },
         input: { type: 'string', description: 'separate 用：源音频路径（mp3/wav）' },
         vocals: { type: 'string', description: 'pitch/voice/mix 用：人声 wav 路径' },
@@ -155,6 +182,7 @@ function registerTools(tools) {
         online: { type: 'boolean', description: 'voice 用：true 允许联网（首次下载模型时），默认离线' },
         out: { type: 'string', description: '输出目录或文件路径，可省略' },
         id: { type: 'string', description: 'job/cancel 用：任务 id' },
+        project: { type: 'string', description: 'gen_render/gen_build 用：projects 下的生成项目目录名' },
       },
     },
     output: {
@@ -197,6 +225,37 @@ function registerTools(tools) {
         await historyReadyPromise()
         const job = cancelJob(String((args && args.id) || ''))
         return { text: jobSummaryText(job), job }
+      }
+      if (action === 'gen') {
+        const projects = await listGenProjects()
+        const text = projects.length
+          ? projects
+              .map(
+                (p) =>
+                  `${p.id} · ${p.title} · 总稿${p.sheet ? '✓' : '—'} · MIDI ${p.midi ? p.midi.name : '—'} · 试听${p.audio ? '✓' : '—'}`,
+              )
+              .join('\n')
+          : '还没有生成项目。'
+        return { text, projects, toolchain: genToolchain(), projectsDir: PROJECTS }
+      }
+      if (action === 'gen_render') {
+        const id = String((args && (args.project || args.id)) || '')
+        if (!id) throw new Error('gen_render 需要 project')
+        const rendered = await renderGenSong(id)
+        return { text: `已渲染 ${rendered.id} → ${rendered.mp3}（${rendered.sizeMb} MB）`, rendered }
+      }
+      if (action === 'gen_build') {
+        const id = String((args && (args.project || args.id)) || '')
+        if (!id) throw new Error('gen_build 需要 project')
+        const built = await buildGenSong(id)
+        return { text: `已重跑 ${built.script}\n${built.output}`, built }
+      }
+      if (action === 'gen_tidy') {
+        const id = String((args && (args.project || args.id)) || '')
+        if (!id) throw new Error('gen_tidy 需要 project')
+        const tidied = await tidyGenProject(id)
+        const moved = tidied.moved.map((m) => `${m.from} → ${m.to}`).join('\n')
+        return { text: `已整理 ${tidied.id}：\n${moved || '（没有需要移动的文件）'}`, tidied }
       }
       const kind = action
       if (kind === 'separate' && !args.input) throw new Error('separate 需要 input')
